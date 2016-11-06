@@ -1,0 +1,22 @@
+sudo: required
+
+env:
+  global:
+    secure: "dE+RANIeOMxUuj/nrD4pFUkfEzc5syxCCA2cODE82fof3a7yYjU3J6e6NyFI2zTt2o+jwhQ6TUoJPkIkmZ8f116T2tQzeVBtKAtIB1iMNv/KEbGzWHmCe8gt82PAH0TlT8OI1E4nkS+kg9T9bj5AR+kGphNq/gtMolhjXbWaTNj+IVlt3jqj3fwijfNgiaVlEewepldZYCH/oNDn/yAikrPNLwP8hiMO084d29PGxDB15eMF1LaSzhCYFrmnDvBVIsJ/k1hc3uNVD8MRwDehwQRIwrdHXapo6oZ/7eCIKVe41VnDUArJeNEKx5rDK/YTUR1d1EvbaVwS0F75DA2SLvJWvgOWsKLLlghSiyTjKfgVy9l+8b7Nk9CEHJC977YL3S16TK3+9bDZC9+6j/cFQUMzTMFxn1LQC93FBysQ8BLwKZoKKRrIGKUJFMJ1oYKst/CdWEW7qeeqY0gM2q9PskQp3PqP55pFrW3tvbOik7sgrAWCtX21A041/4yb4wV6TlTop63ilZuI8TqyCmczOQl+VNYFsQyviWkgqDWeApZPz0oN3L/3r2rgw+FH03e9T+c/oqbUQosEa6jMGL+x7E1Svdyq1xFpjisqpX6xmEdNVybgIsF7o9B5Si5QiKfBQesLIRfhdZklwpjM5OBrblPf2x0QehAG2iwdbZaXhpc="
+
+
+services:
+  - docker
+
+script:
+  - docker.disk-image-builder/prep-src-tree.sh
+  - docker build -t rbuckland/disk-image-builder:latest -f docker.disk-image-builder/Dockerfile docker.disk-image-builder/
+
+after_success:
+  - if [ "$TRAVIS_BRANCH" == "feature/v2_docker" ]; then
+      docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
+      docker push rbuckland/disk-image-builder:latest;
+      ver="v2.$(date +%Y%m%d)";
+      docker tag rbuckland/disk-image-builder:latest rbuckland/disk-image-builder:${ver};
+      docker push rbuckland/disk-image-builder:${ver};
+    fi
