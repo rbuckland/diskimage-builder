@@ -13,7 +13,7 @@ script:
   - docker build -t rbuckland/disk-image-builder:latest -f docker.disk-image-builder/Dockerfile docker.disk-image-builder/
 
 after_success:
-  - if [ "$TRAVIS_BRANCH" == "feature/v2_docker" ]; then
+  - if [ -f docker.disk-image-builder/Dockerfile ]; then
       docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
       docker push rbuckland/disk-image-builder:latest;
       ver="v2.$(date +%Y%m%d)";
