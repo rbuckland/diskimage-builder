@@ -14,6 +14,11 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+# This is the "internal" verison of dib-run-parts.  Note the currently
+# this is copied by the dib-run-parts element into the chroot.  If you
+# modify this, be aware that it needs to run in both contexts.
+DIB_RUN_PARTS=${_LIB}/dib-run-parts
+
 function tmpfs_check() {
   local echo_message=${1:-1}
   [ "$DIB_NO_TMPFS" == "0" ] || return 1
@@ -41,7 +46,7 @@ function mk_build_dir () {
   fi
   trap trap_cleanup EXIT
   echo Building in $TMP_BUILD_DIR
-  export TMP_IMAGE_PATH=$TMP_IMAGE_DIR/image.raw
+  export TMP_IMAGE_DIR
   export OUT_IMAGE_PATH=$TMP_IMAGE_PATH
   export TMP_HOOKS_PATH=$TMP_BUILD_DIR/hooks
 }
@@ -61,8 +66,9 @@ function finish_image () {
 
     mv $OUT_IMAGE_PATH $1
     if [ "$DIB_CHECKSUM" == "1" ]; then
-      md5sum $1 > $1.md5
-      sha256sum $1 > $1.sha256
+      # NOTE(pabelanger): Read image into memory once and generate both checksum
+      # files.
+      md5sum $1 > $1.md5 & sha256sum $1 > $1.sha256 & wait
     fi
     echo "Image file $1 created..."
 }
@@ -76,6 +82,7 @@ function copy_hooks_not_overwrite () {
     test -d $TMP_HOOKS_PATH/$_DIR || mkdir $TMP_HOOKS_PATH/$_DIR
     for _HOOK in $(ls $1); do
       if [ ! -f $TMP_HOOKS_PATH/$_DIR/$_HOOK ]; then
+        echo "Copying hooks $1/$_HOOK"
         cp -t $TMP_HOOKS_PATH/$_DIR -a $1/$_HOOK
       else
         echo "There is a duplicated hook in your elements: $_ELEMENT/$_DIR/$_HOOK"
@@ -142,21 +149,74 @@ function eval_run_d () {
     trap - ERR
 }
 
+# Get any process that appears to be running in $TMP_BUILD_DIR
+function _get_chroot_processes () {
+    # Deselect kernel threads, and use a python script to avoid
+    # forking lots and lots of readlink / grep processes on a busy
+    # system.
+    ps --ppid 2 -p 2 --deselect -o pid= | xargs python -c '
+import os
+import sys
+
+for pid in sys.argv[2:]:
+    try:
+        root = os.readlink("/proc/%s/root" % pid)
+    except:
+        continue
+    if sys.argv[1] in root:
+        print("%s" % pid)
+' $TMP_BUILD_DIR
+}
+
+
+function kill_chroot_processes () {
+    local xtrace
+    xtrace=$(set +o | grep xtrace)
+    set +o xtrace
+
+    local pidname
+
+    if [ -z "${1}" ]; then
+        echo "ERROR: no chroot directory specified"
+        exit 1
+    fi
+
+    for pid in $(_get_chroot_processes); do
+        # If there are open files from the chroot, just kill the process using
+        # these files.  This is racy, but good enough
+        pidname=$(cat $piddir/comm 2>/dev/null || echo "unknown")
+        echo "Killing chroot process: '${pidname}($pid)'"
+        sudo kill $pid
+    done
+
+    $xtrace
+}
+
 function cleanup_build_dir () {
     if ! timeout 5  sh -c " while ! sudo rm -rf $TMP_BUILD_DIR/built; do sleep 1; done"; then
         echo "ERROR: unable to cleanly remove $TMP_BUILD_DIR/built"
         exit 1
     fi
     sudo rm -rf $TMP_BUILD_DIR/mnt
+    kill_chroot_processes $TMP_BUILD_DIR
     if tmpfs_check 0; then
-        sudo umount -f $TMP_BUILD_DIR || true
+        # If kill_chroot_processes did not succeed then we have to wait for
+        # init to reap the orphaned chroot processes
+        if ! timeout 120 sh -c "while ! sudo umount -f $TMP_BUILD_DIR; do sleep 1; done"; then
+            echo "ERROR: failed to umount the $TMP_BUILD_DIR tmpfs mount point"
+            exit 1
+        fi
     fi
     rm -rf --one-file-system $TMP_BUILD_DIR
 }
 
 function cleanup_image_dir () {
+    kill_chroot_processes $TMP_IMAGE_DIR
     if tmpfs_check 0; then
-        sudo umount -f $TMP_IMAGE_DIR || true
+        if ! timeout 120 sh -c "while ! sudo umount -f $TMP_IMAGE_DIR; do sleep 1; done"; then
+            echo "ERROR: failed to umount the $TMP_IMAGE_DIR tmpfs mount point"
+            exit 1
+        fi
     fi
     rm -rf --one-file-system $TMP_IMAGE_DIR
 }
@@ -166,13 +226,14 @@ function run_d() {
     check_element
     check_break before-$1 ${break_cmd:-bash}
     if [ -d ${TMP_HOOKS_PATH}/$1.d ] ; then
+        echo "Running hooks from ${TMP_HOOKS_PATH}/$1.d"
         if [ -n "$2" ]; then
-            dib-run-parts ${TMP_HOOKS_PATH}/$1.d | tee $2
+            ${DIB_RUN_PARTS} ${TMP_HOOKS_PATH}/$1.d | tee $2
             if [[ ${PIPESTATUS[0]} != 0 ]]; then
                 return 1
             fi
         else
-            dib-run-parts ${TMP_HOOKS_PATH}/$1.d
+            ${DIB_RUN_PARTS} ${TMP_HOOKS_PATH}/$1.d
         fi
     fi
     check_break after-$1 bash
@@ -285,7 +346,7 @@ function unmount_dir {
 
     if [ ! -d $dir ]; then
         echo "*** $dir is not a directory"
-        return 1
+        return 0
     fi
 
     # get rid of any symlink elements in the incoming path, because
@@ -297,4 +358,52 @@ function unmount_dir {
         echo "Unmount $m"
         sudo umount -fl $m || true
     done
+}
+
+# Create YAML config file for the block device layer
+# The order here is: use the one the user provides - if there is
+# none provided, fall back to the possible one element which
+# defines a fallback configuration.
+# Parameters:
+#   - name of the to be created config file
+function block_device_create_config_file {
+    local CONFIG_YAML="$1"
+
+    # User setting overwrites this
+    if [[ ${DIB_BLOCK_DEVICE_CONFIG:-} == file://* ]]; then
+        cp $(echo ${DIB_BLOCK_DEVICE_CONFIG} | cut -c 8-) ${CONFIG_YAML}
+        return
+    fi
+    if [ -n "${DIB_BLOCK_DEVICE_CONFIG:-}" ]; then
+        printf "%s" "${DIB_BLOCK_DEVICE_CONFIG}" >${CONFIG_YAML}
+        return
+    fi
+
+    eval declare -A image_elements=($(get_image_element_array))
+    for i in ${!image_elements[@]}; do
+        local BLOCK_DEVICE_CFG_PATH=${image_elements[$i]}/block-device-${ARCH}.yaml
+        if [ -e ${BLOCK_DEVICE_CFG_PATH} ]; then
+            cp ${BLOCK_DEVICE_CFG_PATH} ${CONFIG_YAML}
+        else
+            BLOCK_DEVICE_CFG_PATH=${image_elements[$i]}/block-device-default.yaml
+            if [ -e ${BLOCK_DEVICE_CFG_PATH} ]; then
+                cp ${BLOCK_DEVICE_CFG_PATH} ${CONFIG_YAML}
+            fi
+        fi
+    done
+
+    # If no config is there (until now) use the default config
+    if [ ! -e ${CONFIG_YAML} ]; then
+        cat >${CONFIG_YAML} <<EOF
+- local_loop:
+    name: image0
+    mkfs:
+      name: mkfs_root
+      mount:
+        mount_point: /
+        fstab:
+          options: "defaults"
+          fsck-passno: 1
+EOF
+    fi
 }

@@ -10,7 +10,7 @@ For example, the images of openSUSE 13.2 can be found here:
 
     http://download.opensuse.org/repositories/Cloud:/Images:/openSUSE_13.2/images/
 
-These images should be considered experimental. There are curently only x86_64
+These images should be considered experimental. There are currently only x86_64
 images.
 
 Environment Variables
@@ -18,7 +18,7 @@ Environment Variables
 
 DIB_RELEASE
   :Required: No
-  :Default: 13.1
+  :Default: 42.2
   :Description: Set the desired openSUSE release.
 
 DIB_CLOUD_IMAGES

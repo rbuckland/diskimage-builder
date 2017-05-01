@@ -28,5 +28,4 @@ RUN    cd /usr/local/src/diskimage-builder \
     && pip install -r requirements.txt \
     && python setup.py build \
     && python setup.py install \
-
     && git clone https://github.com/openstack/dib-utils /usr/local/src/dib-utils 

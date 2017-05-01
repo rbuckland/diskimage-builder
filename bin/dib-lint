@@ -21,7 +21,8 @@
 set -eu
 set -o pipefail
 
-ELEMENTS_DIR=diskimage_builder/elements
+ELEMENTS_DIR=${ELEMENTS_DIR:-diskimage_builder/elements}
+LIB_DIR=${LIB_DIR:-diskimage_builder/lib}
 
 parse_exclusions() {
     # Per-file exclusions
@@ -36,11 +37,15 @@ parse_exclusions() {
     #   ignore = sete setu
     section="dib-lint"
     option="ignore"
-    global_exclusions=$(python -c \
-        "import ConfigParser; \
-        conf=ConfigParser.ConfigParser(); \
-        conf.read('tox.ini'); \
-        print conf.get('$section', '$option') if conf.has_option('$section', '$option') else ''"
+    global_exclusions=$(python - <<EOF
+try:
+  import configparser
+except ImportError:
+  import ConfigParser as configparser
+conf=configparser.ConfigParser()
+conf.read('tox.ini')
+print(conf.get('$section', '$option')) if conf.has_option('$section', '$option') else ''
+EOF
     )
     echo $exclusions $global_exclusions
 }
@@ -65,13 +70,15 @@ echo "Running dib-lint in $(pwd)"
 rc=0
 TMPDIR=$(mktemp -d /tmp/tmp.XXXXXXXXXX)
 trap "rm -rf $TMPDIR" EXIT
-for i in $(find $ELEMENTS_DIR -type f   \
-                -not -name \*~     \
-                -not -name \#\*\#  \
-                -not -name \*.orig \
-                -not -name \*.rst  \
-                -not -name \*.yaml \
-                -not -name \*.py   \
+
+# note .py files are run through flake8 directly in tox.ini
+for i in $(find $ELEMENTS_DIR -type f \
+                -not -name \*~        \
+                -not -name \#\*\#     \
+                -not -name \*.orig    \
+                -not -name \*.rst     \
+                -not -name \*.yaml    \
+                -not -name \*.py      \
                 -not -name \*.pyc); do
 
     echo "Checking $i"
@@ -85,10 +92,15 @@ for i in $(find $ELEMENTS_DIR -type f   \
             error "$i is not executable"
         fi
 
-        # Ensure 4 spaces indent are used
-        if [[ "$(file -b -k --mime-type $i)" =~ "text/x-python" ]]; then
+        # run flake8 over python files that don't have .py.  Note our
+        # "dib-python" interpreter can confuse the magic matching
+        # being done in "file" and make it think the file is not
+        # python; special-case it.
+        if [[ "$(file -b -k --mime-type $i)" =~ "text/x-python" ]] || \
+               [[ $firstline =~ "dib-python" ]]; then
             flake8 $i || error "$i failed flake8"
         else
+            # Ensure 4 spaces indent are used
             if ! excluded indent ; then
                 indent_regex='^\( \{4\}\)* \{1,3\}[^ ]'
                 if grep -q "$indent_regex" ${i}; then
@@ -153,6 +165,25 @@ for i in $(find $ELEMENTS_DIR -type f   \
         fi
     fi
 
+    # check that environment files don't "set -x" and they have no executable
+    # bits set
+    if [[ "$i" =~ (environment.d) ]]; then
+        if grep -q "set -x" $i; then
+            error "Environment file $i should not set tracing"
+        fi
+        if [[ -x $i ]]; then
+            error "Environment file $i should not be marked as executable"
+        fi
+    fi
+
+    # check for
+    #  export FOO=$(bar)
+    # calls.  These are dangerous, because the export hides the return
+    # code of the $(bar) call.  Split this into 2 lines and -e will
+    # fail on the assignment
+    if grep -q 'export .*\$(' $i; then
+        error "Split export and assignments in $i"
+    fi
 
     # check that sudo calls in phases run outside the chroot look
     # "safe"; meaning that they seem to operate within the chroot
@@ -182,7 +213,8 @@ done
 
 echo "Checking indents..."
 
-for i in $(find $ELEMENTS_DIR -type f -and -name '*.rst' -or -type f -executable); do
+for i in $(find $ELEMENTS_DIR -type f -and -name '*.rst' -or -type f -executable) \
+             $(find $LIB_DIR -type f); do
     # Check for tab indentation
     if ! excluded tabindent; then
         if grep -q $'^ *\t' ${i}; then
@@ -211,7 +243,7 @@ for i in $(find $ELEMENTS_DIR -type f -name '*.yaml'); do
 import yaml
 import sys
 try:
-    objs = yaml.load(open('$i'))
+    objs = yaml.safe_load(open('$i'))
 except yaml.parser.ParserError:
     sys.exit(1)
 "
