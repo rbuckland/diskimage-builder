@@ -9,14 +9,14 @@ services:
   - docker
 
 script:
-  - docker.disk-image-builder/prep-src-tree.sh
-  - docker build -t rbuckland/disk-image-builder:latest -f docker.disk-image-builder/Dockerfile docker.disk-image-builder/
+  - docker.diskimage-builder/prep-src-tree.sh
+  - docker build -t rbuckland/diskimage-builder:latest -f docker.diskimage-builder/Dockerfile docker.diskimage-builder/
 
 after_success:
-  - if [ -f docker.disk-image-builder/Dockerfile ]; then
+  - if [ -f docker.diskimage-builder/Dockerfile ]; then
       docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
-      docker push rbuckland/disk-image-builder:latest;
+      docker push rbuckland/diskimage-builder:latest;
       ver="v2.$(date +%Y%m%d)";
-      docker tag rbuckland/disk-image-builder:latest rbuckland/disk-image-builder:${ver};
-      docker push rbuckland/disk-image-builder:${ver};
+      docker tag rbuckland/diskimage-builder:latest rbuckland/diskimage-builder:${ver};
+      docker push rbuckland/diskimage-builder:${ver};
     fi
