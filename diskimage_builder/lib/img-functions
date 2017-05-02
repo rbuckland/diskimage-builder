@@ -53,7 +53,7 @@ function cleanup () {
     DIB_BLOCK_DEVICE_SCRIPT=$(which dib-block-device)
     sudo -E ${DIB_BLOCK_DEVICE_SCRIPT} \
          --phase=umount \
-         --params="${DIB_BLOCK_DEVICE_CONFIG}"
+         --params="${DIB_BLOCK_DEVICE_PARAMS_YAML}"
     unmount_image
     cleanup_build_dir
     cleanup_image_dir
