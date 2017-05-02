@@ -3,7 +3,7 @@ FROM ubuntu:16.04
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends apt-transport-https ca-certificates curl bsdtar
+    && apt-get install -y --no-install-recommends apt-transport-https ca-certificates curl bsdtar \
     && mv /bin/tar /bin/tar.notused && ln -s /bin/bsdtar /bin/tar
 
 # RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D 
