@@ -24,17 +24,17 @@ WORKDIR /usr/local/src
 # add in our disk-image-builder src tree
 ADD src /usr/local/src/diskimage-builder
 
-RUN    cd /usr/local/src/diskimage-builder \
+RUN cd /usr/local/src/diskimage-builder \
     && pip install -r requirements.txt \
     && python setup.py build \
     && python setup.py install \
     && git clone https://github.com/openstack/dib-utils /usr/local/src/dib-utils 
-RUN mv /bin/tar /bin/tar.notused && ln -s /usr/bin/bsdtar /bin/tar
+# RUN mv /bin/tar /bin/tar.notused && ln -s /usr/bin/bsdtar /bin/tar
 
-RUN losetup
+# RUN losetup
 
 # now using bsdtar, we have issues
 # https://github.com/moby/moby/issues/355
-RUN apt-get install locales && \
-    locale-gen en_AU && \
-    locale-gen en_AU.UTF-8 
+# RUN apt-get install locales && \
+#     locale-gen en_AU && \
+#     locale-gen en_AU.UTF-8 
